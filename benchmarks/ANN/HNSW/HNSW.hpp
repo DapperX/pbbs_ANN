@@ -904,20 +904,25 @@ void HNSW<U,Allocator>::insert(Iter begin, Iter end, bool from_blank)
 template<typename U, template<typename> class Allocator>
 auto HNSW<U,Allocator>::search_layer(const node &u, const parlay::sequence<node_id> &eps, uint32_t ef, uint32_t l_c, search_control ctrl) const
 {
-	// parlay::sequence<bool> visited(n);
-	//parlay::sequence<uint32_t> visited(mask+1, n+1);
+	// std::vector<bool> visited(n);
+	// const uint32_t bits = ef>2? std::ceil(std::log2(ef*ef)): 2;
+	// const uint32_t mask = (1u<<bits)-1;
+	// parlay::sequence<uint32_t> visited(mask+1, n+1);
 	// TODO: Try hash to an array
 	// TODO: monitor the size of `visited`
 	std::unordered_set<uint32_t> visited;
+	uint32_t cnt_visited = 0;
 	parlay::sequence<dist> W, discarded;
 	std::set<dist,farthest> C;
 	W.reserve(ef);
 
 	for(node_id ep : eps)
 	{
-		//const auto id = U::get_id(get_node(ep).data);
-		//visited[parlay::hash64_2(id)&mask] = id;
+		// const auto id = U::get_id(get_node(ep).data);
+		// visited[id] = true;
+		// visited[parlay::hash64_2(id)&mask] = id;
 		visited.insert(U::get_id(get_node(ep).data));
+		cnt_visited++;
 		const auto d = U::distance(u.data,get_node(ep).data,dim);
 		C.insert({d,ep});
 		W.push_back({d,ep});
@@ -960,11 +965,14 @@ auto HNSW<U,Allocator>::search_layer(const node &u, const parlay::sequence<node_
 		C.erase(C.begin());
 		for(node_id pv: neighbourhood(c, l_c))
 		{
-			//const auto id = U::get_id(get_node(pv).data);
-			//const auto idx = parlay::hash64_2(id)&mask;
-			//if(visited[idx]==id) continue;
-			//visited[idx] = id;
+			// const auto id = U::get_id(get_node(pv).data);
+			// const auto idx = parlay::hash64_2(id)&mask;
+			// if(visited[idx]==id) continue;
+			// visited[idx] = id;
+			// if(visited[id]) continue;
+			// visited[id] = true;
 			if(!visited.insert(U::get_id(get_node(pv).data)).second) continue;
+			cnt_visited++;
 			const auto d = U::distance(u.data,get_node(pv).data,dim);
 			if(W.size()<ef||d<W[0].d)
 			{
@@ -989,13 +997,13 @@ auto HNSW<U,Allocator>::search_layer(const node &u, const parlay::sequence<node_
 	//total_visited += visited.size();
 	//total_visited += visited.size()-std::count(visited.begin(),visited.end(),n+1);
 	const auto id = parlay::worker_id();
-	total_visited[id] += visited.size();
+	total_visited[id] += cnt_visited;
 	total_size_C[id] += C.size()+cnt_eval;
 	total_eval[id] += cnt_eval;
 	if(ctrl.log_per_stat)
 	{
 		const auto qid = *ctrl.log_per_stat;
-		per_visited[qid] += visited.size();
+		per_visited[qid] += cnt_visited;
 		per_eval[qid] += C.size()+cnt_eval;
 		per_size_C[qid] += cnt_eval;
 	}
