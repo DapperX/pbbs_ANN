@@ -190,7 +190,7 @@ if file_out is not None:
 		]);
 		writer.writerow([])
 		writer.writerow([
-			"Num queries","Target recall","Actual recall","QPS",
+			"Num queries","Target recall","Actual recall","QPS","Beam size",
 			"Average Cmps","Tail Cmps","Average Visited","Tail Visited","k"
 		])
 
@@ -203,6 +203,7 @@ if file_out is not None:
 				b,
 				q["recall"],
 				round(q["QPS"], 2),
+				int(q["ef"]),
 				int(q["avg_cmp"]),
 				q[".99_cmp"],
 				int(q["avg_visit"]),

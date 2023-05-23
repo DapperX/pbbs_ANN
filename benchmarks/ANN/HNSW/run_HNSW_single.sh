@@ -56,7 +56,7 @@ elif [[ "$dataset" == "YandexT2I" ]]; then
 elif [[ "$dataset" == "FB_ssnpp" ]]; then
 	shortname="ssnpp"
 fi
-CSV_PATH=${RESULT_PREFIX}/${shortname}_${algo}.csv
+CSV_PATH=${RESULT_PREFIX}/${shortname}_${algo}_${RANDOM}.csv
 if [ -n "$rad" ]; then
 	echo "python3 parse_range.py ${LOG_PATH} ${CSV_PATH}"
 	python3 parse_range.py ${LOG_PATH} ${CSV_PATH}
