@@ -1,6 +1,10 @@
 CXX = g++
 #CXX = clang++
-CXXFLAGS_BASIC = -std=c++17 -Wall -Wextra -pthread -march=native -I../bench 
+DIR_BENCH = ../bench
+DIR_GBBS = external/Graph-Compression
+DIR_REORDER = external/Graph-Compression/benchmarks/Reordering
+DIR_INCLUDE = $(DIR_BENCH) $(DIR_GBBS) $(DIR_REORDER)
+CXXFLAGS_BASIC = -std=c++17 -Wall -Wextra -pthread -march=native $(DIR_INCLUDE:%=-I%)
 ifeq (DEBUG, $(MODE))
 	CXXFLAGS_BASIC += -O0 -g
 else

@@ -322,6 +322,7 @@ void run_test(commandLine parameter) // intend to be pass-by-value manner
 	const float alpha = parameter.getOptionDoubleValue("-alpha", 1);
 	const float batch_base = parameter.getOptionDoubleValue("-b", 2);
 	const bool symmetrize = parameter.getOption("--symm");
+	const bool reorder = parameter.getOption("--reorder");
 	const char *file_out = parameter.getOptionValue("-out");
 	
 	parlay::internal::timer t("HNSW", true);
@@ -341,10 +342,16 @@ void run_test(commandLine parameter) // intend to be pass-by-value manner
 	);
 	t.next("Build index");
 
+	// post-processing
 	if(symmetrize)
 	{
 		g.symmetrize();
 		t.next("Symmetrize edges");
+	}
+	if(reorder)
+	{
+		g.reorder();
+		t.next("Reorder edges");
 	}
 
 	const uint32_t height = g.get_height();
@@ -376,7 +383,7 @@ int main(int argc, char **argv)
 	putchar('\n');
 
 	commandLine parameter(argc, argv, 
-		"-type <elemType> -dist <distance> -n <numInput> -ml <m_l> -m <m> "
+		"-type <elemType> -dist <distance> -n <numInput> -ml <m_l> -m <m> [--reorder] "
 		"-efc <ef_construction> -alpha <alpha> --symm [-b <batchBase>] "
 		"-in <inFile> -out <outFile> -q <queryFile> -g <groundtruthFile> [-k <numQuery>=all] "
 		"-ef <ef_query>,... -r <recall@R>,... -th <threshold>,... [-beta <beta>,...] "

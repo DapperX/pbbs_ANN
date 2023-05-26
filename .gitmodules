@@ -13,3 +13,6 @@
 [submodule "benchmarks/ANN/external/hnswlib/hnswlib"]
 	path = benchmarks/ANN/external/hnswlib/hnswlib
 	url = git@github.com:DapperX/hnswlib.git
+[submodule "benchmarks/ANN/HNSW/external/Graph-Compression"]
+	path = benchmarks/ANN/HNSW/external/Graph-Compression
+	url = git@github.com:Akatsukis/Graph-Compression.git

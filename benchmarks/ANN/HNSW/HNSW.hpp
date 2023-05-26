@@ -28,6 +28,8 @@
 #include <parlay/delayed_sequence.h>
 #include <parlay/random.h>
 #include "debug.hpp"
+#include <gbbs/graph.h>
+#include <LDDOrdering/LDDOrdering.h>
 #define DEBUG_OUTPUT 0
 #if DEBUG_OUTPUT
 #define debug_output(...) fprintf(stderr, __VA_ARGS__)
@@ -429,6 +431,89 @@ public:
 				else nbh_v.insert(nbh_v.end(),nbh_v_add.begin(), nbh_v_add.end());
 			});
 		}
+	}
+
+	void reorder()
+	{
+		using type_edge = std::tuple<gbbs::uintE, gbbs::empty>;
+		using type_adj = gbbs::vertex_data; // {offset,degree}
+		gbbs::empty e{};
+
+		size_t n=this->n;
+		auto *adj_out=new type_adj[n], *adj_in=new type_adj[n];
+
+		parlay::sequence<size_t> offset_out(n+1);
+		parlay::parallel_for(0, n, [&](size_t i){
+			node_id pu = i;
+			offset_out[i] = neighbourhood(get_node(pu),0).size();
+		});
+		offset_out[n] = 0;
+		size_t m = parlay::scan_inplace(offset_out);
+		offset_out[n] = m;
+
+		auto *edge_out=new type_edge[m], *edge_in=new type_edge[m];
+		parlay::sequence<std::pair<node_id,node_id>> edge_list(m);
+		parlay::parallel_for(0, n, [&](size_t i){
+			node_id pu = i;
+			const auto &nbh = neighbourhood(get_node(pu),0);
+			const size_t base = offset_out[pu];
+			const size_t degree = offset_out[pu+1]-offset_out[pu];
+			assert(degree==nbh.size());
+			for(size_t j=0; j<degree; ++j)
+			{
+				edge_out[base+j] = {nbh[j], e};
+				edge_list[base+j] = {nbh[j], pu};
+			}
+			adj_out[pu] = {base, degree};
+			adj_in[pu] = {0, 0}; // initialization
+		});
+
+		auto edge_grouped = parlay::group_by_key(edge_list);
+		parlay::sequence<size_t> offset_in(n+1, 0);
+		parlay::parallel_for(0, edge_grouped.size(), [&](size_t i){
+			const auto &[pv, nbh_v] = edge_grouped[i];
+			offset_in[pv] = nbh_v.size();
+		});
+		size_t mm = parlay::scan_inplace(offset_in);
+		assert(m==mm);
+		offset_in[n] = m;
+
+		parlay::parallel_for(0, edge_grouped.size(), [&](size_t i){
+			const auto &[pv, nbh] = edge_grouped[i];
+			const size_t base = offset_in[pv];
+			const size_t degree = offset_in[pv+1]-offset_in[pv];
+			assert(degree==nbh.size());
+			for(size_t j=0; j<degree; ++j)
+				edge_in[base+j] = {nbh[j], e};
+			adj_in[pv] = {base, degree};
+		});
+
+		auto deleter = [&]{
+			delete adj_out;
+			delete adj_in;
+			delete edge_out;
+			delete edge_in;
+		};
+		gbbs::asymmetric_graph<gbbs::asymmetric_vertex, gbbs::empty> tg(
+			adj_out, adj_in, n, m, deleter, edge_out, edge_in
+		);
+
+		auto cluster_ids = gbbs::LDD(tg, 0.2);
+		auto order = parlay::tabulate(tg.n, [&](size_t i) {
+			return std::make_pair(cluster_ids[i], i);
+		});
+		parlay::sort_inplace(make_slice(order));
+
+		auto perm = parlay::sequence<gbbs::uintE>(tg.n);
+		parlay::parallel_for(0, tg.n, [&](size_t i){
+			auto id = order[i].second;
+			perm[id] = i;
+		});
+
+		assert(n==node_pool.size());
+		node_pool = parlay::tabulate(n, [&](size_t i){
+			return node_pool[perm[i]];
+		});
 	}
 
 public:
