@@ -62,7 +62,7 @@ public:
 		batch_base: 		growth rate of the batch size (discarded because of two passes)
 	*/
 	template<typename Iter>
-	HNSW(Iter begin, Iter end, uint32_t dim, float m_l=1, uint32_t m=100, uint32_t ef_construction=50, float alpha=5, float batch_base=2, bool do_fixing=false);
+	HNSW(Iter begin, Iter end, uint32_t dim, float m_l=1, uint32_t m=100, uint32_t ef_construction=50, float alpha=5, float batch_base=2);
 
 	/*
 		Construct from the saved model
@@ -373,9 +373,9 @@ public:
 		return level==0? m*2: m;
 	}
 
-	void fix_edge()
+	void symmetrize()
 	{
-		fprintf(stderr, "Start fixing edges...\n");
+		fprintf(stderr, "Start to symmetrize edges...\n");
 
 		for(int32_t l_c=get_node(entrance[0]).level; l_c>=0; --l_c)
 		{
@@ -645,7 +645,7 @@ HNSW<U,Allocator>::HNSW(const std::string &filename_model, G getter)
 
 template<typename U, template<typename> class Allocator>
 template<typename Iter>
-HNSW<U,Allocator>::HNSW(Iter begin, Iter end, uint32_t dim_, float m_l_, uint32_t m_, uint32_t ef_construction_, float alpha_, float batch_base, bool do_fixing)
+HNSW<U,Allocator>::HNSW(Iter begin, Iter end, uint32_t dim_, float m_l_, uint32_t m_, uint32_t ef_construction_, float alpha_, float batch_base)
 	: dim(dim_), m_l(m_l_), m(m_), ef_construction(ef_construction_), alpha(alpha_), n(std::distance(begin,end))
 {
 	static_assert(std::is_same_v<typename std::iterator_traits<Iter>::value_type, T>);
@@ -696,7 +696,6 @@ HNSW<U,Allocator>::HNSW(Iter begin, Iter end, uint32_t dim_, float m_l_, uint32_
 	fprintf(stderr, "# visited: %lu\n", parlay::reduce(total_visited,parlay::addm<size_t>{}));
 	fprintf(stderr, "# eval: %lu\n", parlay::reduce(total_eval,parlay::addm<size_t>{}));
 	fprintf(stderr, "size of C: %lu\n", parlay::reduce(total_size_C,parlay::addm<size_t>{}));
-	if(do_fixing) fix_edge();
 
 	#if 0
 		for(const auto *pu : node_pool)

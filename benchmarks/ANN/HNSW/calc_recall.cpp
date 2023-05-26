@@ -321,7 +321,7 @@ void run_test(commandLine parameter) // intend to be pass-by-value manner
 	const uint32_t efc = parameter.getOptionIntValue("-efc", 60);
 	const float alpha = parameter.getOptionDoubleValue("-alpha", 1);
 	const float batch_base = parameter.getOptionDoubleValue("-b", 2);
-	const bool do_fixing = !!parameter.getOptionIntValue("-f", 0);
+	const bool symmetrize = parameter.getOption("--symm");
 	const char *file_out = parameter.getOptionValue("-out");
 	
 	parlay::internal::timer t("HNSW", true);
@@ -337,9 +337,15 @@ void run_test(commandLine parameter) // intend to be pass-by-value manner
 	fputs("Start building HNSW\n", stderr);
 	HNSW<U> g(
 		ps.begin(), ps.begin()+ps.size(), dim,
-		m_l, m, efc, alpha, batch_base, do_fixing
+		m_l, m, efc, alpha, batch_base
 	);
 	t.next("Build index");
+
+	if(symmetrize)
+	{
+		g.symmetrize();
+		t.next("Symmetrize edges");
+	}
 
 	const uint32_t height = g.get_height();
 	printf("Highest level: %u\n", height);
@@ -371,7 +377,7 @@ int main(int argc, char **argv)
 
 	commandLine parameter(argc, argv, 
 		"-type <elemType> -dist <distance> -n <numInput> -ml <m_l> -m <m> "
-		"-efc <ef_construction> -alpha <alpha> -f <symmEdge> [-b <batchBase>] "
+		"-efc <ef_construction> -alpha <alpha> --symm [-b <batchBase>] "
 		"-in <inFile> -out <outFile> -q <queryFile> -g <groundtruthFile> [-k <numQuery>=all] "
 		"-ef <ef_query>,... -r <recall@R>,... -th <threshold>,... [-beta <beta>,...] "
 		"-le <limit_num_eval> [-w <warmup>] [-rad radius (for range search)]"
