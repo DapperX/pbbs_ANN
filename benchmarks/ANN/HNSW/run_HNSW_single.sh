@@ -29,7 +29,7 @@ mkdir -p $RESULT_DIR
 
 echo "Running for the first ${scale} million points on ${dataset}"
 param_basic="-n $((scale*1000000)) -type ${dtype} -dist ${dist}"
-param_building="-ml 0.36 -m ${m} -efc ${efc} -alpha ${alpha} -b 2 -f 0 -in ${file_in}"
+param_building="-ml 0.36 -m ${m} -efc ${efc} -alpha ${alpha} -b 2 -f 1 -in ${file_in}"
 param_query="-q ${file_q} -g ${file_gt} -ef ${ef} -r ${rr} -beta ${beta} -th ${th}"
 param_other="-w ${warmup} -le ${limit_eval}"
 if [ -n "$rad" ]; then

@@ -76,6 +76,7 @@ double output_recall(HNSW<U> &g, parlay::internal::timer &t, uint32_t ef, uint32
 		ctrl.beta = beta;
 		ctrl.radius = radius;
 		ctrl.limit_eval = limit_eval;
+		ctrl.indicate_ep = g.n;
 		res[i] = g.search(q[i], k, ef, ctrl);
 	});
 	const double time_query = t.next_time();

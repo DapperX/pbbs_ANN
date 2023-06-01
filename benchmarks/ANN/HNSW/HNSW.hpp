@@ -377,6 +377,20 @@ public:
 	{
 		fprintf(stderr, "Start fixing edges...\n");
 
+		parlay::parallel_for(0, n, [&](size_t i){
+			auto &u = node_pool[i];
+			std::unordered_set<uint32_t> owned;
+			parlay::sequence<uint32_t> nbh_additional;
+			auto &nbh0 = neighbourhood(u,0);
+			for(node_id pv : nbh0)
+				owned.insert(pv);
+			for(uint32_t l=u.level; l>0; --l)
+				for(node_id pv: neighbourhood(u,l))
+					if(owned.insert(pv).second)
+						nbh_additional.push_back(pv);
+			nbh0.insert(nbh0.end(), nbh_additional.begin(), nbh_additional.end());
+		});
+		/*
 		for(int32_t l_c=get_node(entrance[0]).level; l_c>=0; --l_c)
 		{
 			parlay::sequence<parlay::sequence<std::pair<node_id,node_id>>> edge_add(n);
@@ -429,6 +443,7 @@ public:
 				else nbh_v.insert(nbh_v.end(),nbh_v_add.begin(), nbh_v_add.end());
 			});
 		}
+		*/
 	}
 
 public:
@@ -1342,7 +1357,8 @@ parlay::sequence<std::pair<uint32_t,float>> HNSW<U,Allocator>::search(const T &q
 			}
 			*/
 		}
-	else eps = {*ctrl.indicate_ep};
+	else if(*ctrl.indicate_ep<n)
+		eps = {*ctrl.indicate_ep};
 	auto W_ex = search_layer(u, eps, ef, 0, ctrl);
 	// auto W_ex = search_layer_new_ex(u, eps, ef, 0, ctrl);
 	// auto W_ex = beam_search_ex(u, eps, ef, 0);
