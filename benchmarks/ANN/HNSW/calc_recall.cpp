@@ -55,7 +55,7 @@ void visit_point(const T &array, size_t dim0, size_t dim1)
 template<class U>
 double output_recall(HNSW<U> &g, parlay::internal::timer &t, uint32_t ef, uint32_t k, 
 	uint32_t cnt_query, parlay::sequence<typename U::type_point> &q, parlay::sequence<parlay::sequence<uint32_t>> &gt, 
-	uint32_t rank_max, float beta, bool warmup, std::optional<float> radius, std::optional<uint32_t> limit_eval)
+	uint32_t rank_max, float beta, bool warmup, std::optional<float> radius, std::optional<uint32_t> limit_eval, bool refactor)
 {
 	per_visited.resize(cnt_query);
 	per_eval.resize(cnt_query);
@@ -65,7 +65,10 @@ double output_recall(HNSW<U> &g, parlay::internal::timer &t, uint32_t ef, uint32
 	if(warmup)
 	{
 		parlay::parallel_for(0, cnt_query, [&](size_t i){
-			res[i] = g.search(q[i], k, ef);
+			if(refactor)
+				res[i] = g.search_refactor(q[i], k, ef);
+			else
+				res[i] = g.search(q[i], k, ef);
 		});
 	}
 	t.next("Doing search");
@@ -76,7 +79,10 @@ double output_recall(HNSW<U> &g, parlay::internal::timer &t, uint32_t ef, uint32
 		ctrl.beta = beta;
 		ctrl.radius = radius;
 		ctrl.limit_eval = limit_eval;
-		res[i] = g.search(q[i], k, ef, ctrl);
+		if(refactor)
+			res[i] = g.search_refactor(q[i], k, ef, ctrl);
+		else
+			res[i] = g.search(q[i], k, ef, ctrl);
 	});
 	const double time_query = t.next_time();
 	const auto qps = cnt_query/time_query;
@@ -219,6 +225,7 @@ void output_recall(HNSW<U> &g, commandLine param, parlay::internal::timer &t)
 	auto radius = [](const char *s) -> std::optional<float>{
 			return s? std::optional<float>{atof(s)}: std::optional<float>{};
 		}(param.getOptionValue("-rad"));
+	const bool refactor = param.getOption("--refactor");
 
 	auto get_best = [&](uint32_t k, uint32_t ef, std::optional<uint32_t> limit_eval=std::nullopt){
 		double best_recall = 0;
@@ -226,7 +233,7 @@ void output_recall(HNSW<U> &g, commandLine param, parlay::internal::timer &t)
 		for(auto b : beta)
 		{
 			const double cur_recall = 
-				output_recall(g, t, ef, k, cnt_query, q, gt, rank_max, b, enable_warmup, radius, limit_eval);
+				output_recall(g, t, ef, k, cnt_query, q, gt, rank_max, b, enable_warmup, radius, limit_eval, refactor);
 			if(cur_recall>best_recall)
 			{
 				best_recall = cur_recall;
@@ -322,8 +329,11 @@ void run_test(commandLine parameter) // intend to be pass-by-value manner
 	const float alpha = parameter.getOptionDoubleValue("-alpha", 1);
 	const float batch_base = parameter.getOptionDoubleValue("-b", 2);
 	const bool symmetrize = parameter.getOption("--symm");
+	const bool refactor = parameter.getOption("--refactor");
 	const bool reorder = parameter.getOption("--reorder");
 	const char *file_out = parameter.getOptionValue("-out");
+	const uint32_t prune = parameter.getOptionIntValue("-prune", 0);
+	const double rank_frac = parameter.getOptionDoubleValue("-rank_frac", 1.0);
 	
 	parlay::internal::timer t("HNSW", true);
 
@@ -343,6 +353,11 @@ void run_test(commandLine parameter) // intend to be pass-by-value manner
 	t.next("Build index");
 
 	// post-processing
+	if(prune)
+	{
+		g.prune(prune);
+		t.next("Prune");
+	}
 	if(symmetrize)
 	{
 		g.symmetrize();
@@ -352,6 +367,11 @@ void run_test(commandLine parameter) // intend to be pass-by-value manner
 	{
 		g.reorder();
 		t.next("Reorder edges");
+	}
+	if(refactor)
+	{
+		g.refactor(rank_frac);
+		t.next("Refactor");
 	}
 
 	const uint32_t height = g.get_height();
@@ -384,7 +404,8 @@ int main(int argc, char **argv)
 
 	commandLine parameter(argc, argv, 
 		"-type <elemType> -dist <distance> -n <numInput> -ml <m_l> -m <m> [--reorder] "
-		"-efc <ef_construction> -alpha <alpha> --symm [-b <batchBase>] "
+		"-efc <ef_construction> -alpha <alpha> "
+		"--symm [-b <batchBase>] [--refactor] [-rank_frac <frac>=1.0] [-prune new_m]"
 		"-in <inFile> -out <outFile> -q <queryFile> -g <groundtruthFile> [-k <numQuery>=all] "
 		"-ef <ef_query>,... -r <recall@R>,... -th <threshold>,... [-beta <beta>,...] "
 		"-le <limit_num_eval> [-w <warmup>] [-rad radius (for range search)]"

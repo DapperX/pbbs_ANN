@@ -74,7 +74,12 @@ public:
 	template<typename G>
 	HNSW(const std::string &filename_model, G getter);
 
-	parlay::sequence<std::pair<uint32_t,float>> search(const T &q, uint32_t k, uint32_t ef, search_control ctrl={});
+	parlay::sequence<std::pair<uint32_t,float>> search(
+		const T &q, uint32_t k, uint32_t ef, const search_control &ctrl={}
+	);
+	parlay::sequence<std::pair<uint32_t,float>> search_refactor(
+		const T &q, uint32_t k, uint32_t ef, const search_control &ctrl={}
+	);
 	// parlay::sequence<std::tuple<uint32_t,uint32_t,float>> search_ex(const T &q, uint32_t k, uint32_t ef, uint64_t verbose=0);
 	// save the current model to a file
 	void save(const std::string &filename_model) const;
@@ -85,6 +90,7 @@ public:
 		// uint32_t id;
 		uint32_t level;
 		parlay::sequence<node_id> *neighbors;
+		parlay::sequence<node_id> final_nbh;
 		T data;
 	};
 
@@ -134,10 +140,17 @@ public:
 	mutable parlay::sequence<size_t> total_size_C = parlay::sequence<size_t>(parlay::num_workers());
 	mutable parlay::sequence<size_t> total_range_candidate = parlay::sequence<size_t>(parlay::num_workers());
 
-	static auto neighbourhood(const node &u, uint32_t level)
+	static auto neighbourhood(node &u, uint32_t level)
 		-> parlay::sequence<node_id>&
 	{
-		return u.neighbors[level];
+		const constexpr auto level_none = std::numeric_limits<uint32_t>::max();
+		return level==level_none? u.final_nbh: u.neighbors[level];
+	}
+
+	static auto neighbourhood(const node &u, uint32_t level)
+		-> const parlay::sequence<node_id>&
+	{
+		return neighbourhood(const_cast<node&>(u),level);
 	}
 
 	// `set_neighbourhood` will consume `vNewConn`
@@ -372,8 +385,14 @@ public:
 	auto search_layer(const node &u, const parlay::sequence<node_id> &eps, uint32_t ef, uint32_t l_c, search_control ctrl={}) const; // To static
 	auto search_layer_new_ex(const node &u, const parlay::sequence<node_id> &eps, uint32_t ef, uint32_t l_c, search_control ctrl={}) const; // To static
 	auto beam_search_ex(const node &u, const parlay::sequence<node_id> &eps, uint32_t beamSize, uint32_t l_c, search_control ctrl={}) const;
+	parlay::sequence<node_id> search_layer_to(
+		const node &u, uint32_t ef, uint32_t l_stop, const search_control &ctrl={}
+	);
+
 	auto get_threshold_m(uint32_t level){
-		return level==0? m*2: m;
+		// return level==0? m*2: m;
+		(void)level;
+		return m;
 	}
 
 	void symmetrize()
@@ -434,7 +453,7 @@ public:
 		}
 	}
 
-	void reorder()
+	auto make_gbbsGraph(uint32_t level)
 	{
 		using type_edge = std::tuple<gbbs::uintE, gbbs::empty>;
 		using type_adj = gbbs::vertex_data; // {offset,degree}
@@ -446,7 +465,7 @@ public:
 		parlay::sequence<size_t> offset_out(n+1);
 		parlay::parallel_for(0, n, [&](size_t i){
 			node_id pu = i;
-			offset_out[i] = neighbourhood(get_node(pu),0).size();
+			offset_out[i] = neighbourhood(get_node(pu),level).size();
 		});
 		offset_out[n] = 0;
 		size_t m = parlay::scan_inplace(offset_out);
@@ -456,7 +475,7 @@ public:
 		parlay::sequence<std::pair<node_id,node_id>> edge_list(m);
 		parlay::parallel_for(0, n, [&](size_t i){
 			node_id pu = i;
-			const auto &nbh = neighbourhood(get_node(pu),0);
+			const auto &nbh = neighbourhood(get_node(pu),level);
 			const size_t base = offset_out[pu];
 			const size_t degree = offset_out[pu+1]-offset_out[pu];
 			assert(degree==nbh.size());
@@ -498,6 +517,13 @@ public:
 		gbbs::asymmetric_graph<gbbs::asymmetric_vertex, gbbs::empty> tg(
 			adj_out, adj_in, n, m, deleter, edge_out, edge_in
 		);
+		return tg;
+	}
+
+	void reorder()
+	{
+		auto tg = make_gbbsGraph(0);
+		auto rev_perm = parlay::sequence<gbbs::uintE>(tg.n);
 
 		auto cluster_ids = gbbs::LDD(tg, 0.2);
 		auto order = parlay::tabulate(tg.n, [&](size_t i) {
@@ -537,7 +563,130 @@ public:
 
 		for(auto &e : entrance)
 			e = perm[e];
+	}
+
+	void prune(uint32_t m_new)
+	{
+		parlay::parallel_for(0, n, [&](node_id pu){
+			auto &u = get_node(pu);
+			for(uint32_t l=0; l<=u.level; ++l)
+				neighbourhood(u,l) = select_neighbors(
+					u.data,
+					parlay::map(neighbourhood(u,l),[&](node_id pv){
+						return dist{U::distance(u.data,get_node(pv).data,dim),pv};
+					}), 
+					m_new,
+					l
+				);
 		});
+	}
+
+	void refactor(double rank_frac=1.0)
+	{
+		const auto level_ep = get_node(entrance[0]).level;
+		const auto cnt = parlay::tabulate(level_ep+1, [this](uint32_t l){
+			return cnt_vertex(l);
+		});
+		auto node_available = parlay::tabulate(n, [](size_t i){return node_id(i);});
+		for(uint32_t l=0; l<level_ep; ++l)
+		{
+			/*
+				compute fractions of upper/this levels
+				compute fractions among this level
+			*/
+			auto f = exp(log(m)*(log(cnt[l+1])/log(cnt[l])-1));
+			// const uint32_t m_upper = round(f/(1+f)*m);
+			// const uint32_t m_this = m - m_upper;
+			auto node_l = parlay::filter(node_available, [&,l](node_id pu){
+				return get_node(pu).level==l;
+			});
+			auto bond = parlay::tabulate(node_l.size(), [&](size_t i){
+				const node_id pu = node_l[i];
+				const node_id parent = search_layer_to(get_node(pu), 1, l)[0];
+				return std::make_pair(parent, pu);
+			});
+			/*
+			parlay::sort(bond, [](const auto &lhs, const auto &rhs){
+				return lhs.first < rhs.first;
+			});
+			auto split = parlay::filter(
+				parlay::delayed_seq<size_t>(bond.size()-2, [&](size_t i){
+					return i+1;
+				}),
+				[&](size_t i){
+					return bond[i-1].first != bond[i].first;
+				}
+			);
+			split.push_back(bond.size());
+			*/
+			auto segments = parlay::group_by_key(bond);
+			/*
+			auto max_size = parlay::reduce(
+				parlay::delayed_seq<size_t>(
+					segments.size(),
+					[&](size_t i){return segments[i].second.size();}
+				),
+				parlay::maxm<size_t>{}
+			);
+			*/
+			auto sizes = parlay::tabulate(segments.size(), [&](size_t i){
+				return segments[i].second.size();
+			});
+			auto max_size = parlay::kth_smallest(
+				sizes, sizes.size()*rank_frac, std::less<>{});
+
+			auto calc_m = [&](double k){
+				double n = cnt[l];
+				double dk = pow(k, 1.0/dim);
+				double M = log(pow(n,dk))/log(double(m));
+				double dp = pow(k*n, 1.0/M);
+				return dp;
+			};
+			parlay::parallel_for(0, segments.size(), [&](size_t i){
+				auto &[pp,children] = segments[i];
+				auto &p = get_node(pp);
+				uint32_t m_total = round(calc_m(double(children.size())/max_size));
+				// assert(m_total<=m);
+				p.final_nbh = select_neighbors(
+					p.data,
+					parlay::map(children,[&](node_id pv){
+						return dist{U::distance(p.data,get_node(pv).data,dim),pv};
+					}), 
+					round(m_total*f/(1+f)),
+					l
+				);
+				parlay::parallel_for(0, children.size(), [&](size_t j){
+					auto &u = get_node(children[j]);
+					auto nbh_l = select_neighbors(
+						u.data, 
+						parlay::map(neighbourhood(u,l),[&](node_id pv){
+							return dist{U::distance(u.data,get_node(pv).data,dim),pv};
+						}), 
+						round(m_total/(1+f)),
+						l
+					);
+					u.final_nbh.append(std::move(nbh_l));
+					for(uint32_t lu=0; lu<=u.level; ++lu)
+						neighbourhood(u,lu).clear();
+				});
+
+				// for u in segment:
+					// compute m_u_this = frac(m_this, weight_p)
+					// p = parent[u]
+					// p.downward_candidate.append(u)
+					// prune(neighbors, m_u_this)
+					// clear(u.neighbors)
+				// prune(p.downward_candidate, frac(m_upper,m_this,m_u_this))
+			});
+			// node_available = std::move(node_l);
+		}
+
+		// count average degree (in the caller)
+		auto deg_each = parlay::delayed_seq<size_t>(n, [&](node_id pu){
+			return get_node(pu).final_nbh.size();
+		});
+		size_t deg_total = parlay::reduce(deg_each, parlay::addm<size_t>());
+		printf("Total degree: %lu\n", deg_total);
 	}
 
 public:
@@ -774,7 +923,13 @@ HNSW<U,Allocator>::HNSW(Iter begin, Iter end, uint32_t dim_, float m_l_, uint32_
 	// node_pool.push_back(entrance_init);
 	node_pool.resize(1);
 	node_id entrance_init = 0;
-	new(&get_node(entrance_init)) node{level_ep, new parlay::sequence<node_id>[level_ep+1], *rand_seq.begin()/*anything else*/};
+	new(&get_node(entrance_init)) node{
+		level_ep, 
+		new parlay::sequence<node_id>[level_ep+1], 
+		parlay::sequence<node_id>{}, 
+		*rand_seq.begin()
+		/*anything else*/
+	};
 	entrance.push_back(entrance_init);
 
 	uint32_t batch_begin=0, batch_end=1, size_limit=n*0.02;
@@ -851,7 +1006,12 @@ void HNSW<U,Allocator>::insert(Iter begin, Iter end, bool from_blank)
 		// auto *const pu = &pool[i];		// TODO: add pointer manager
 		node_id pu = offset+i;
 
-		new(&get_node(pu)) node{level_u, new parlay::sequence<node_id>[level_u+1], q};
+		new(&get_node(pu)) node{
+			level_u,
+			new parlay::sequence<node_id>[level_u+1],
+			parlay::sequence<node_id>{},
+			q
+		};
 		node_new[i] = pu;
 	});
 	}
@@ -1012,7 +1172,7 @@ void HNSW<U,Allocator>::insert(Iter begin, Iter end, bool from_blank)
 template<typename U, template<typename> class Allocator>
 auto HNSW<U,Allocator>::search_layer(const node &u, const parlay::sequence<node_id> &eps, uint32_t ef, uint32_t l_c, search_control ctrl) const
 {
-	// std::vector<bool> visited(n);
+	// std::vector<bool> visited(n+1);
 	// const uint32_t bits = ef>2? std::ceil(std::log2(ef*ef)): 2;
 	// const uint32_t mask = (1u<<bits)-1;
 	// parlay::sequence<uint32_t> visited(mask+1, n+1);
@@ -1422,8 +1582,34 @@ parlay::sequence<std::pair<uint32_t,float>> HNSW<U,Allocator>::search(const T &q
 	return res;
 }
 */
+
 template<typename U, template<typename> class Allocator>
-parlay::sequence<std::pair<uint32_t,float>> HNSW<U,Allocator>::search(const T &q, uint32_t k, uint32_t ef, search_control ctrl)
+parlay::sequence<typename HNSW<U,Allocator>::node_id> HNSW<U,Allocator>::search_layer_to(
+	const node &u, uint32_t ef, uint32_t l_stop, const search_control &ctrl)
+{
+	auto eps = entrance;
+	for(uint32_t l_c=get_node(entrance[0]).level; l_c>l_stop; --l_c)
+	{
+		search_control c{};
+		c.log_per_stat = ctrl.log_per_stat; // whether count dist calculations at all layers
+		// c.limit_eval = ctrl.limit_eval; // whether apply the limit to all layers
+		const auto W = search_layer(u, eps, ef, l_c, c);
+		eps.clear();
+		eps.push_back(W[0].u);
+		/*
+		while(!W.empty())
+		{
+			eps.push_back(W.top().u);
+			W.pop();
+		}
+		*/
+	}
+	return eps;
+}
+
+template<typename U, template<typename> class Allocator>
+parlay::sequence<std::pair<uint32_t,float>> HNSW<U,Allocator>::search(
+	const T &q, uint32_t k, uint32_t ef, const search_control &ctrl)
 {
 	const auto id = parlay::worker_id();
 	total_range_candidate[id] = 0;
@@ -1438,27 +1624,13 @@ parlay::sequence<std::pair<uint32_t,float>> HNSW<U,Allocator>::search(const T &q
 		per_size_C[qid] = 0;
 	}
 
-	node u{0, nullptr, q}; // To optimize
+	node u{n, nullptr, {}, q}; // To optimize
 	// std::priority_queue<dist,parlay::sequence<dist>,farthest> W;
-	auto eps = entrance;
-	if(!ctrl.indicate_ep)
-		for(int l_c=get_node(entrance[0]).level; l_c>0; --l_c) // TODO: fix the type
-		{
-			search_control c{};
-			c.log_per_stat = ctrl.log_per_stat; // whether count dist calculations at all layers
-			// c.limit_eval = ctrl.limit_eval; // whether apply the limit to all layers
-			const auto W = search_layer(u, eps, 1, l_c, c);
-			eps.clear();
-			eps.push_back(W[0].u);
-			/*
-			while(!W.empty())
-			{
-				eps.push_back(W.top().u);
-				W.pop();
-			}
-			*/
-		}
-	else eps = {*ctrl.indicate_ep};
+	parlay::sequence<node_id> eps;
+	if(ctrl.indicate_ep)
+		eps.push_back(*ctrl.indicate_ep);
+	else
+		eps = search_layer_to(u, 1, 0, ctrl);
 	auto W_ex = search_layer(u, eps, ef, 0, ctrl);
 	// auto W_ex = search_layer_new_ex(u, eps, ef, 0, ctrl);
 	// auto W_ex = beam_search_ex(u, eps, ef, 0);
@@ -1484,6 +1656,28 @@ parlay::sequence<std::pair<uint32_t,float>> HNSW<U,Allocator>::search(const T &q
 	*/
 	for(const auto &e : R)
 		res.push_back({U::get_id(get_node(e.u).data),/* e.depth,*/ e.d});
+	return res;
+}
+
+template<typename U, template<typename> class Allocator>
+parlay::sequence<std::pair<uint32_t,float>> HNSW<U,Allocator>::search_refactor(
+	const T &q, uint32_t k, uint32_t ef, const search_control &ctrl)
+{
+	node u{n, nullptr, {}, q}; // To optimize
+	auto W_ex = search_layer(u, entrance, ef, std::numeric_limits<uint32_t>::max(), ctrl);
+	auto &R = W_ex;
+	if(!ctrl.radius && R.size()>k) // the range search ignores the given k
+	{
+		std::sort(R.begin(), R.end(), farthest());
+		if(k>0)
+			k = std::upper_bound(R.begin()+k, R.end(), R[k-1], farthest())-R.begin();
+		R.resize(k);
+	}
+
+	parlay::sequence<std::pair<uint32_t,float>> res;
+	res.reserve(R.size());
+	for(const auto &e : R)
+		res.push_back({U::get_id(get_node(e.u).data),e.d});
 	return res;
 }
 
