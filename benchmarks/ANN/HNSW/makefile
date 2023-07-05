@@ -31,6 +31,9 @@ all: calc_recall gen_model eval_graph
 gen_model: gen_model.cpp HNSW.hpp
 	$(CXX) $< $(CXXFLAGS_BASIC) $(CXXFLAGS_HDF5) $(CXXFLAGS_JEMALLOC) $(CXXFLAGS_IGNORE_SYMBOL) -o $@
 
+gen_graph: gen_graph.cpp HNSW.hpp
+	$(CXX) $< $(CXXFLAGS_BASIC) $(CXXFLAGS_HDF5) $(CXXFLAGS_JEMALLOC) $(CXXFLAGS_IGNORE_SYMBOL) -o $@
+
 calc_recall: calc_recall.cpp HNSW.hpp
 	$(CXX) $< $(CXXFLAGS_BASIC) $(CXXFLAGS_HDF5) $(CXXFLAGS_JEMALLOC) $(CXXFLAGS_IGNORE_SYMBOL) -o $@
 
