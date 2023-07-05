@@ -30,6 +30,7 @@
 #include "debug.hpp"
 #include <gbbs/graph.h>
 #include <LDDOrdering/LDDOrdering.h>
+// #include <BisectionOrdering/BisectionOrdering.h>
 #define DEBUG_OUTPUT 0
 #if DEBUG_OUTPUT
 #define debug_output(...) fprintf(stderr, __VA_ARGS__)
@@ -464,7 +465,7 @@ public:
 				edge_out[base+j] = {nbh[j], e};
 				edge_list[base+j] = {nbh[j], pu};
 			}
-			adj_out[pu] = {base, degree};
+			adj_out[pu] = {base, (gbbs::uintE)degree};
 			adj_in[pu] = {0, 0}; // initialization
 		});
 
@@ -485,10 +486,10 @@ public:
 			assert(degree==nbh.size());
 			for(size_t j=0; j<degree; ++j)
 				edge_in[base+j] = {nbh[j], e};
-			adj_in[pv] = {base, degree};
+			adj_in[pv] = {base, (gbbs::uintE)degree};
 		});
 
-		auto deleter = [&]{
+		auto deleter = [=]{
 			delete adj_out;
 			delete adj_in;
 			delete edge_out;
@@ -508,11 +509,34 @@ public:
 		parlay::parallel_for(0, tg.n, [&](size_t i){
 			auto id = order[i].second;
 			perm[id] = i;
+			rev_perm[i] = id;
 		});
+		/*
+		auto order = parlay::tabulate<std::pair<gbbs::uintE,double>>(
+			n, [&](size_t i){return std::make_pair(i,0);}
+		);
 
+		BisectionOrdering_f(tg, make_slice(order));
+		auto perm = parlay::sequence<gbbs::uintE>(tg.n);
+		parlay::parallel_for(0, tg.n, [&](size_t i){
+			perm[order[i].first] = i;
+			rev_perm[i] = order[i].first;
+		});
+		*/
 		assert(n==node_pool.size());
 		node_pool = parlay::tabulate(n, [&](size_t i){
-			return node_pool[perm[i]];
+			return node_pool[rev_perm[i]];
+		});
+
+		parlay::parallel_for(0, n, [&](size_t i){
+			auto &u = node_pool[i];
+			for(uint32_t l=0; l<=u.level; ++l)
+				for(auto &v : u.neighbors[l])
+					v = perm[v];
+		});
+
+		for(auto &e : entrance)
+			e = perm[e];
 		});
 	}
 
