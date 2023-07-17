@@ -390,9 +390,9 @@ public:
 	);
 
 	auto get_threshold_m(uint32_t level){
-		// return level==0? m*2: m;
-		(void)level;
-		return m;
+		return level==0? m*2: m;
+		// (void)level;
+		// return m;
 	}
 
 	void symmetrize()
@@ -1052,7 +1052,7 @@ void HNSW<U,Allocator>::insert(Iter begin, Iter end, bool from_blank)
 
 			auto &eps_u = eps[i]; // TODO: check
 			auto res = search_layer(u, eps_u, ef_construction, l_c);
-			auto neighbors_vec = select_neighbors(u.data, res, get_threshold_m(l_c)*factor_m, l_c);
+			auto neighbors_vec = select_neighbors(u.data, res, m/*get_threshold_m(l_c)*factor_m*/, l_c);
 			// move the content from `neighbors_vec` to `u.neighbors[l_c]`
 			// auto &nbh_u = nbh_new[i];
 			auto &edge_u = edge_add[i];
