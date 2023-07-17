@@ -1175,25 +1175,40 @@ void HNSW<U,Allocator>::insert(Iter begin, Iter end, bool from_blank)
 template<typename U, template<typename> class Allocator>
 auto HNSW<U,Allocator>::search_layer(const node &u, const parlay::sequence<node_id> &eps, uint32_t ef, uint32_t l_c, search_control ctrl) const
 {
-	// std::vector<bool> visited(n+1);
-	// const uint32_t bits = ef>2? std::ceil(std::log2(ef*ef)): 2;
-	// const uint32_t mask = (1u<<bits)-1;
-	// parlay::sequence<uint32_t> visited(mask+1, n+1);
+	// #define USE_HASHTBL
+	// #define USE_BOOLARRAY
+	#define USE_UNORDERED_SET
+#ifdef USE_HASHTBL
+	const uint32_t bits = ef>2? std::ceil(std::log2(ef*ef)): 2;
+	const uint32_t mask = (1u<<bits)-1;
+	parlay::sequence<uint32_t> visited(mask+1, n+1);
+#endif
+#ifdef USE_BOOLARRAY
+	std::vector<bool> visited(n+1);
+#endif
 	// TODO: Try hash to an array
 	// TODO: monitor the size of `visited`
-	std::unordered_set<uint32_t> visited;
 	uint32_t cnt_visited = 0;
+#ifdef USE_UNORDERED_SET
+	std::unordered_set<uint32_t> visited;
+#endif
 	parlay::sequence<dist> W, discarded;
 	std::set<dist,farthest> C;
 	W.reserve(ef);
 
 	for(node_id ep : eps)
 	{
-		// const auto id = U::get_id(get_node(ep).data);
-		// visited[id] = true;
-		// visited[parlay::hash64_2(id)&mask] = id;
+	#ifdef USE_HASHTBL
+		const auto id = U::get_id(get_node(ep).data);
+		visited[parlay::hash64_2(id)&mask] = id;
+	#endif
+	#ifdef USE_BOOLARRAY
+		visited[id] = true;
+	#endif
+	#ifdef USE_UNORDERED_SET
 		visited.insert(U::get_id(get_node(ep).data));
 		cnt_visited++;
+	#endif
 		const auto d = U::distance(u.data,get_node(ep).data,dim);
 		C.insert({d,ep});
 		W.push_back({d,ep});
@@ -1236,13 +1251,19 @@ auto HNSW<U,Allocator>::search_layer(const node &u, const parlay::sequence<node_
 		C.erase(C.begin());
 		for(node_id pv: neighbourhood(c, l_c))
 		{
-			// const auto id = U::get_id(get_node(pv).data);
-			// const auto idx = parlay::hash64_2(id)&mask;
-			// if(visited[idx]==id) continue;
-			// visited[idx] = id;
-			// if(visited[id]) continue;
-			// visited[id] = true;
+		#ifdef USE_HASHTBL
+			const auto id = U::get_id(get_node(pv).data);
+			const auto idx = parlay::hash64_2(id)&mask;
+			if(visited[idx]==id) continue;
+			visited[idx] = id;
+		#endif
+		#ifdef USE_BOOLARRAY
+			if(visited[id]) continue;
+			visited[id] = true;
+		#endif
+		#ifdef USE_UNORDERED_SET
 			if(!visited.insert(U::get_id(get_node(pv).data)).second) continue;
+		#endif
 			cnt_visited++;
 			const auto d = U::distance(u.data,get_node(pv).data,dim);
 			if(W.size()<ef||d<W[0].d)
