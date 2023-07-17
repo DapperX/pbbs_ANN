@@ -1106,6 +1106,7 @@ void HNSW<U,Allocator>::insert(Iter begin, Iter end, bool from_blank)
 			auto &nbh_v_add = edge_add_grouped[j].second;
 
 			// std::unordered_set<node_id> hash_table(nbh_v.begin(),nbh_v.end());
+			/*
 			for(auto it=nbh_v_add.begin(); it!=nbh_v_add.end();)
 			{
 				bool is_extant = *it==pv||std::find_if(nbh_v.begin(), nbh_v.end(), [&](const node_id pu_extant){
@@ -1115,6 +1116,7 @@ void HNSW<U,Allocator>::insert(Iter begin, Iter end, bool from_blank)
 				// bool is_extant = hash_table.find(*it)!=hash_table.end();
 				it = is_extant? nbh_v_add.erase(it): std::next(it);
 			}
+			*/
 
 			const uint32_t size_nbh_total = nbh_v.size()+nbh_v_add.size();
 
