@@ -143,8 +143,9 @@ public:
 	static auto neighbourhood(node &u, uint32_t level)
 		-> parlay::sequence<node_id>&
 	{
-		const constexpr auto level_none = std::numeric_limits<uint32_t>::max();
-		return level==level_none? u.final_nbh: u.neighbors[level];
+		// const constexpr auto level_none = std::numeric_limits<uint32_t>::max();
+		// return level==level_none? u.final_nbh: u.neighbors[level];
+		return level==0? u.final_nbh: u.neighbors[level];
 	}
 
 	static auto neighbourhood(const node &u, uint32_t level)
