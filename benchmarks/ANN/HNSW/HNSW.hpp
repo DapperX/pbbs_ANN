@@ -1175,11 +1175,11 @@ void HNSW<U,Allocator>::insert(Iter begin, Iter end, bool from_blank)
 template<typename U, template<typename> class Allocator>
 auto HNSW<U,Allocator>::search_layer(const node &u, const parlay::sequence<node_id> &eps, uint32_t ef, uint32_t l_c, search_control ctrl) const
 {
-	// #define USE_HASHTBL
+	#define USE_HASHTBL
 	// #define USE_BOOLARRAY
-	#define USE_UNORDERED_SET
+	// #define USE_UNORDERED_SET
 #ifdef USE_HASHTBL
-	const uint32_t bits = ef>2? std::ceil(std::log2(ef*ef)): 2;
+	const uint32_t bits = ef>2? std::ceil(std::log2(ef*ef))-2: 2;
 	const uint32_t mask = (1u<<bits)-1;
 	parlay::sequence<uint32_t> visited(mask+1, n+1);
 #endif
@@ -1194,7 +1194,8 @@ auto HNSW<U,Allocator>::search_layer(const node &u, const parlay::sequence<node_
 #endif
 	parlay::sequence<dist> W, discarded;
 	std::set<dist,farthest> C;
-	W.reserve(ef);
+	std::set<node_id> w_inserted;
+	W.reserve(ef+1);
 
 	for(node_id ep : eps)
 	{
@@ -1212,6 +1213,7 @@ auto HNSW<U,Allocator>::search_layer(const node &u, const parlay::sequence<node_
 		const auto d = U::distance(u.data,get_node(ep).data,dim);
 		C.insert({d,ep});
 		W.push_back({d,ep});
+		w_inserted.insert(ep);
 	}
 	// std::make_heap(C.begin(), C.end(), nearest());
 	std::make_heap(W.begin(), W.end(), farthest());
@@ -1266,7 +1268,7 @@ auto HNSW<U,Allocator>::search_layer(const node &u, const parlay::sequence<node_
 		#endif
 			cnt_visited++;
 			const auto d = U::distance(u.data,get_node(pv).data,dim);
-			if(W.size()<ef||d<W[0].d)
+			if((W.size()<ef||d<W[0].d) && w_inserted.insert(pv).second)
 			{
 				C.insert({d,pv});
 				// C.push_back({d,pv,dc+1});
@@ -1276,6 +1278,7 @@ auto HNSW<U,Allocator>::search_layer(const node &u, const parlay::sequence<node_
 				if(W.size()>ef)
 				{
 					std::pop_heap(W.begin(), W.end(), farthest());
+					// w_inserted.erase(W.back().u);
 					if(ctrl.radius && W.back().d<=*ctrl.radius)
 						discarded.push_back(W.back());
 					W.pop_back();
