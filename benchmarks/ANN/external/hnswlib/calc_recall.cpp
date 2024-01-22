@@ -371,30 +371,28 @@ void run_test(commandLine parameter) // intend to be pass-by-value manner
 
 	L2SpaceI l2space(dim);
 	auto *appr_alg = new HierarchicalNSW<int>(&l2space, ps.size(), m, efc);
+	appr_alg->alpha = alpha;
 	parlay::parallel_for(0, ps.size(), [&](size_t i){
 		appr_alg->addPoint((void*)ps[i].coord, (size_t)ps[i].id);
 	});
 	t.next("Build index");
-	/*
-	const uint32_t height = g.get_height();
+
+	const uint32_t height = appr_alg->get_height();
 	printf("Highest level: %u\n", height);
 	puts("level     #vertices         #degrees  max_degree");
-	for(uint32_t i=0; i<=height; ++i)
+	//for(uint32_t i=0; i<=0; ++i)
 	{
-		const uint32_t level = height-i;
-		size_t cnt_vertex = g.cnt_vertex(level);
-		size_t cnt_degree = g.cnt_degree(level);
-		size_t degree_max = g.get_degree_max(level);
+		const uint32_t level = 0;
+		auto degs = parlay::tabulate<size_t>(ps.size(), [&](size_t i){
+			return appr_alg->get_degree(ps[i].id);
+		});
+		size_t cnt_vertex = degs.size();
+		size_t cnt_degree = parlay::reduce(degs, parlay::addm<size_t>{});
+		size_t degree_max = parlay::reduce(degs, parlay::binary_op([](size_t x, size_t y){return std::max(x,y);},0));
 		printf("#%2u: %14lu %16lu %11lu\n", level, cnt_vertex, cnt_degree, degree_max);
 	}
-	*/
-	t.next("Count vertices and degrees");
 
-	if(file_out)
-	{
-		// g.save(file_out);
-		t.next("Write to the file");
-	}
+	t.next("Count vertices and degrees");
 
 	output_recall<U>(*appr_alg, parameter, t);
 }
